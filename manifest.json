@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "uniarchy.lock",
+  "name": "Uniarchy Lock Screen",
+  "version": "1.0.0",
+  "author": "uniarchy",
+  "description": "Minimal glass lock screen: clock, time-of-day greeting and a translucent password pill; windows slide apart on lock and the screen fades over the desktop on unlock.",
+  "omarchy": {
+    "capabilities": [
+      "authentication"
+    ],
+    "clonedFrom": "omarchy.lock"
+  },
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}
