@@ -3,7 +3,9 @@
 A minimal glass lock screen for Omarchy: crisp dimmed wallpaper, a big clock,
 a time-of-day greeting and a translucent password field in your theme's colors.
 
-![Lock screen](attachments/preview-1.png)
+<p align="center">
+  <img src="attachments/demo.gif" alt="Lock, always-on and unlock">
+</p>
 
 | Lock | Always-on | Unlock |
 |---|---|---|
