@@ -1,96 +1,43 @@
 # Uniarchy Lock Screen
 
-Минималистичный экран блокировки для Omarchy: чёткие обои с лёгким затемнением,
-крупные часы, приветствие по времени суток и стеклянное поле пароля. Цвета
-берутся из `[lock]` текущей темы, шрифт — системный моноширинный.
-При блокировке окна разъезжаются, при разблокировке экран растворяется
-в живом рабочем столе. MIT, DmitryUniversall.
+A minimal glass lock screen for Omarchy: crisp dimmed wallpaper, a big clock,
+a time-of-day greeting and a translucent password field in your theme's colors.
 
-![Экран блокировки](attachments/preview-1.png)
+![Lock screen](attachments/preview-1.png)
 
-<p align="center">
-  <img src="attachments/demo.gif" alt="Блокировка, always-on и разблокировка" width="720">
-</p>
+| Lock | Always-on | Unlock |
+|---|---|---|
+| ![Lock](attachments/lock.gif) | ![Always-on](attachments/always-on.gif) | ![Unlock](attachments/unlock.gif) |
 
-## Возможности
+## Features
 
-### Блокировка
+- **Lock animation**: the bar slides up and windows drift apart, while the wallpaper stays put.
+- **Unlock animation**: the screen dissolves into the live desktop.
+- **Always-on**: after a short idle, only a dimmed clock stays and the backlight drops. Later the screen turns off.
+- **Password field**: keyboard layout, Caps Lock warning and fingerprint status.
+- **Battery** indicator under the date.
+- **Power buttons**: sleep, restart and shut down. Restart and shut down need a second click.
 
-<img src="attachments/lock.gif" alt="Анимация блокировки" width="800">
+## Install
 
-Перед блокировкой снимается снимок экрана. Бар уезжает вверх, каждое окно
-вырезается по своим границам (с рамкой и скруглением) и уплывает от центра
-экрана: левое — влево, правое — вправо. Обои остаются на месте и только
-затемняются, затем по очереди проявляются часы, приветствие и поле пароля.
-На пустом рабочем столе уезжает только бар, полноэкранное окно улетает целиком.
+```sh
+omarchy plugin add https://github.com/DmitryUniversall/uniarchy-lock
+omarchy plugin enable uniarchy.lock
+omarchy plugin disable omarchy.lock
+omarchy restart shell
+```
 
-### Always-on
+For the unlock fade, add this to `misc` in `~/.config/hypr/looknfeel.lua`, then run `hyprctl reload`:
 
-<img src="attachments/always-on.gif" alt="Режим always-on" width="800">
+```lua
+session_lock_xray = true,
+```
 
-Через 30 секунд без активности всё, кроме часов, даты и заряда, плавно гаснет,
-часы приглушаются и съезжают в центр, а подсветка встроенного дисплея
-опускается до 15%. Через 2 минуты экран выключается. Любое движение мыши или
-нажатие клавиши возвращает обычный вид и прежнюю яркость.
+To go back to the stock lock screen, run `omarchy plugin remove uniarchy.lock`.
 
-### Разблокировка
+## Settings
 
-<img src="attachments/unlock.gif" alt="Анимация разблокировки" width="800">
-
-После верного пароля или отпечатка значок сканера сменяется галочкой,
-содержимое поднимается и гаснет, а экран растворяется, показывая живой рабочий
-стол. Сессия остаётся заблокированной до конца анимации (около полсекунды).
-
-### Остальное
-
-- **Раскладка и Caps Lock** — метка `en`/`ru` слева в поле пароля, под полем
-  предупреждение `caps lock`.
-- **Сканер отпечатка** — значок «дышит», пока сканер ждёт палец, краснеет
-  с подписью `not recognized` при несовпадении.
-- **Батарея** — горизонтальный индикатор с процентами под датой: голубой
-  на зарядке, красный при 10% и ниже.
-- **Кнопки питания** — сон, перезагрузка и выключение в правом нижнем углу.
-  Перезагрузка и выключение просят второй клик в течение 3 секунд.
-
-Вход по паролю и отпечатку работает через те же PAM-профили, что и штатный
-экран блокировки (`omarchy-lock-password`, `omarchy-lock-fingerprint`).
-
-## Установка
-
-Плагин — клон встроенного `omarchy.lock` (`clonedFrom` в манифесте), поэтому
-получает от него право на аутентификацию. Зависимости штатные для Omarchy:
-`grim`, `jq`, `brightnessctl`.
-
-1. Установите плагин из git (или положите папку в
-   `~/.config/omarchy/plugins/uniarchy.lock`), затем включите его
-   и выключите штатный экран блокировки:
-
-   ```sh
-   omarchy plugin add https://github.com/DmitryUniversall/uniarchy-lock
-   omarchy plugin enable uniarchy.lock
-   omarchy plugin disable omarchy.lock
-   omarchy restart shell
-   ```
-
-2. Для анимации разблокировки Hyprland должен рисовать рабочий стол под
-   прозрачным экраном блокировки. В `~/.config/hypr/looknfeel.lua`, в `misc`:
-
-   ```lua
-   misc = {
-     session_lock_xray = true,
-   },
-   ```
-
-   Затем `hyprctl reload` и `hyprctl configerrors`. Без этой опции экран
-   при разблокировке растворится в чёрный.
-
-Сервис блокировки не перезагружается на лету: после правки кода плагина нужен
-`omarchy restart shell`. Вернуть штатный экран: `omarchy plugin remove uniarchy.lock`.
-
-## Настройки
-
-Настройки хранятся прямо в записи плагина в `~/.config/omarchy/shell.json`
-и применяются сразу после сохранения файла:
+Settings go on the plugin's entry in `~/.config/omarchy/shell.json` and apply on save:
 
 ```json
 {
@@ -110,48 +57,25 @@
 }
 ```
 
-| Ключ | По умолчанию | Что делает |
-|---|---|---|
-| `clockFormat` | `"HH:mm"` | формат часов; `"h:mm AP"` — 12-часовой |
-| `dateFormat` | `"dddd, d MMMM"` | формат даты (английская локаль) |
-| `greeting` | `true` | приветствие по времени суток |
-| `showUser` | `true` | логин под приветствием |
-| `dim` | `0.22` | сила затемнения обоев, от 0 до 1 |
-| `animations` | `true` | `false` — без снимка экрана и без анимаций |
-| `keyboardLayout` | `true` | метка раскладки в поле пароля |
-| `battery` | `true` | индикатор заряда |
-| `powerButtons` | `true` | кнопки питания |
-| `alwaysOnAfter` | `30` | секунд до режима always-on; `0` — выключен |
-| `alwaysOnBrightness` | `15` | яркость подсветки в always-on, %; `0` — не менять |
-| `screenOffAfter` | `120` | секунд до выключения экрана; `0` — не выключать |
+| Key | Description |
+|---|---|
+| `clockFormat`, `dateFormat` | Qt time and date formats; use `"h:mm AP"` for a 12-hour clock |
+| `greeting`, `showUser` | show the greeting and the username |
+| `dim` | wallpaper dimming, from 0 to 1 |
+| `animations` | `false` turns off all animations |
+| `keyboardLayout`, `battery`, `powerButtons` | show or hide each element |
+| `alwaysOnAfter` | idle seconds before always-on; `0` disables it |
+| `alwaysOnBrightness` | backlight % in always-on; `0` leaves it unchanged |
+| `screenOffAfter` | idle seconds before the screen turns off; `0` never turns it off |
 
-Таймеры считаются от последнего действия на экране блокировки.
-
-## IPC и проверки
-
-Превью открывается поверх рабочего стола без настоящей блокировки и
-закрывается кликом:
+## Preview
 
 ```sh
-omarchy-shell lock preview          # превью с анимацией блокировки
-omarchy-shell lock previewAmbient   # включить/выключить always-on в превью
-omarchy-shell lock previewUnlock    # анимация разблокировки, затем закрыть превью
-omarchy-shell lock hidePreview
-omarchy-shell lock status           # состояние, раскладка и текущие настройки
-omarchy system lock                 # настоящая блокировка
+omarchy-shell lock preview          # click to close
+omarchy-shell lock previewAmbient   # toggle always-on
+omarchy-shell lock previewUnlock    # play the unlock animation
 ```
 
-## Механизм и ограничения
+## License
 
-- Снимок делает `snapshot.sh`: `grim` по каждому монитору (около 50 мс) плюс
-  геометрия видимых окон из `hyprctl clients`. Файлы лежат в
-  `$XDG_RUNTIME_DIR/omarchy-lock-snapshot/`, доступны только пользователю
-  и удаляются после разблокировки. Снимок укладывается в штатную паузу
-  в 500 мс перед блокировкой; если он завис, блокировка наступает не позже
-  чем через 1,5 секунды.
-- Рабочий стол виден сквозь экран блокировки только во время анимации после
-  успешного входа и, если снимок не удался, в первые 0,6 секунды блокировки.
-- Плавающее окно поверх обычного попадает в вырезку обоих и улетает дважды.
-- Если shell перезапустится в режиме always-on, подсветка останется на
-  пониженной яркости.
-- В превью кнопки питания ничего не делают.
+MIT, DmitryUniversall
