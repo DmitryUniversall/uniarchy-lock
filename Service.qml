@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Services.Pam
 import Quickshell.Wayland
@@ -47,6 +48,38 @@ Item {
   property bool previewPending: false
   property bool unlocking: false
   property bool previewUnlocking: false
+  property bool previewAmbient: false
+
+  // Inline settings from this plugin's entry in shell.json; anything missing
+  // falls back to these defaults.
+  readonly property string pluginId: "uniarchy.lock"
+  readonly property string shellConfigPath: home + "/.config/omarchy/shell.json"
+  readonly property var defaultSettings: ({
+    clockFormat: "HH:mm",
+    dateFormat: "dddd, d MMMM",
+    greeting: true,
+    showUser: true,
+    dim: 0.22,
+    animations: true,
+    keyboardLayout: true,
+    battery: true,
+    powerButtons: true,
+    alwaysOnAfter: 30,
+    alwaysOnBrightness: 15,
+    screenOffAfter: 120
+  })
+  property var settings: defaultSettings
+
+  // Keyboard state shown in the password field.
+  property string keyboardLayout: ""
+  property bool capsLock: false
+  property bool keyboardRefreshPending: false
+
+  // "" | "failed": flashes when a finger is read but does not match.
+  property string fingerprintFeedback: ""
+  // Dimmed clock-only screen shown after alwaysOnAfter seconds of inactivity.
+  property bool ambient: false
+  property bool backlightDimmed: false
 
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
@@ -115,9 +148,111 @@ Item {
     beginLock()
   }
 
+  function applySettings(text) {
+    var entry = null
+    try {
+      var config = JSON.parse(String(text || "{}"))
+      var plugins = Array.isArray(config.plugins) ? config.plugins : []
+      for (var i = 0; i < plugins.length; i++) {
+        if (plugins[i] && plugins[i].id === pluginId) entry = plugins[i]
+      }
+    } catch (e) {
+      // Keep the last good settings while shell.json is mid-edit.
+      return
+    }
+
+    var next = {}
+    for (var key in defaultSettings) {
+      var value = entry && entry[key] !== undefined ? entry[key] : defaultSettings[key]
+      next[key] = typeof defaultSettings[key] === "number" ? Number(value) : value
+    }
+    settings = next
+  }
+
+  function refreshKeyboard() {
+    if (!settings.keyboardLayout) return
+    if (keyboardProc.running) {
+      keyboardRefreshPending = true
+      return
+    }
+    keyboardRefreshPending = false
+    keyboardProc.running = true
+  }
+
+  // Picks the keyboard someone types on: fcitx5's virtual keyboard and power
+  // or video buttons also show up as keyboards but never carry the layout.
+  function readKeyboard(text) {
+    var keyboards = []
+    try {
+      keyboards = (JSON.parse(String(text || "{}")).keyboards || []).filter(function(k) {
+        return k && k.name && !/virtual|fcitx|button|video-bus|hotkey|switch/i.test(k.name)
+      })
+    } catch (e) {
+      return
+    }
+    if (keyboards.length === 0) return
+
+    var keyboard = keyboards[0]
+    for (var i = 0; i < keyboards.length; i++) {
+      if (keyboards[i].main) keyboard = keyboards[i]
+      if (keyboards[i].active_layout_index > keyboard.active_layout_index) keyboard = keyboards[i]
+    }
+
+    var layouts = String(keyboard.layout || "").split(",")
+    var code = layouts[keyboard.active_layout_index] || layouts[0] || ""
+    var names = { us: "en", gb: "en" }
+    keyboardLayout = layouts.length > 1 ? (names[code] || code).substring(0, 3) : ""
+    capsLock = !!keyboard.capsLock
+  }
+
+  function enterAmbient() {
+    if (!lockRequested || unlocking || ambient) return
+    ambient = true
+    logEvent("ambient")
+    var brightness = Math.round(Number(settings.alwaysOnBrightness) || 0)
+    if (brightness > 0 && !backlightDimmed) {
+      backlightDimmed = true
+      backlightProc.command = ["bash", "-c", "d=$(omarchy-hw-display) && brightnessctl -q -d \"$d\" -s set \"$1%\"", "_", String(brightness)]
+      backlightProc.running = true
+    }
+  }
+
+  function leaveAmbient() {
+    ambient = false
+    if (!backlightDimmed) return
+    backlightDimmed = false
+    // A dim still being applied restores once it lands (see backlightProc).
+    if (!backlightProc.running) backlightRestoreProc.running = true
+  }
+
+  function armAmbientTimer() {
+    var after = Number(settings.alwaysOnAfter) || 0
+    var off = Number(settings.screenOffAfter) || 0
+    if (after <= 0 || (off > 0 && after >= off)) {
+      ambientTimer.stop()
+      return
+    }
+    ambientTimer.interval = after * 1000
+    ambientTimer.restart()
+  }
+
+  function powerAction(action) {
+    if (!lockRequested || unlocking) return
+    var commands = {
+      suspend: "systemctl suspend",
+      reboot: "omarchy-system-reboot",
+      shutdown: "omarchy-system-shutdown"
+    }
+    if (!commands[action] || powerProc.running) return
+    logEvent("power: " + action)
+    powerProc.command = ["bash", "-c", commands[action]]
+    powerProc.running = true
+  }
+
   function closePreview() {
     previewOutroTimer.stop()
     previewUnlocking = false
+    previewAmbient = false
     previewVisible = false
     clearSnapshot()
   }
@@ -178,6 +313,7 @@ Item {
     pendingPassword = ""
     failureMessage = ""
     failedAttempts = 0
+    fingerprintFeedback = ""
     authenticatingPassword = false
     fingerprintAuthenticating = false
     fingerprintRetryTimer.stop()
@@ -193,7 +329,9 @@ Item {
 
     resetAuthenticationState()
     unlocking = false
-    captureSnapshot()
+    leaveAmbient()
+    if (settings.animations) captureSnapshot()
+    refreshKeyboard()
     lockRequested = true
     armBlankTimer()
     logEvent("lock-requested")
@@ -213,11 +351,12 @@ Item {
 
     // Keep the session locked while the view fades out over the live desktop
     // (misc:session_lock_xray), then release it.
-    if (sessionLock.locked) {
+    if (sessionLock.locked && settings.animations) {
       unlocking = true
       resetAuthenticationState()
       runWake()
       idleBlankTimer.stop()
+      ambientTimer.stop()
       logEvent("unlock-outro")
       unlockOutroTimer.restart()
       return
@@ -235,6 +374,8 @@ Item {
     pendingSessionLockTimer.stop()
     resetAuthenticationState()
     idleBlankTimer.stop()
+    ambientTimer.stop()
+    leaveAmbient()
     sessionLock.locked = false
     logEvent("unlocked")
     runWake()
@@ -242,12 +383,20 @@ Item {
   }
 
   function armBlankTimer() {
+    armAmbientTimer()
+    var off = Number(settings.screenOffAfter) || 0
+    if (off <= 0) {
+      idleBlankTimer.stop()
+      return
+    }
+    idleBlankTimer.interval = off * 1000
     idleBlankTimer.armedAt = Date.now()
     idleBlankTimer.restart()
   }
 
   function runWake() {
     if (!wakeProcess.running) wakeProcess.running = true
+    if (ambient || backlightDimmed) leaveAmbient()
     if (lockRequested) armBlankTimer()
   }
 
@@ -365,6 +514,14 @@ Item {
         failureMessage: root.failureMessage
         failedAttempts: root.failedAttempts
         inputEnabled: root.lockRequested && !root.unlocking
+        settings: root.settings
+        keyboardLayout: root.keyboardLayout
+        capsLock: root.capsLock
+        fingerprintFeedback: root.fingerprintFeedback
+        fingerprintScanning: root.fingerprintAuthenticating
+        ambient: root.ambient
+        onKeyboardStateRequested: root.refreshKeyboard()
+        onPowerRequested: function(action) { root.powerAction(action) }
         loadBackground: root.locked
         passwordText: root.enteredPassword
         onPasswordTextEdited: function(password) { root.enteredPassword = password }
@@ -394,6 +551,11 @@ Item {
       snapshotVersion: root.snapshotVersion
       snapshotLayout: root.snapshotLayoutFor(previewWindow.screen)
       unlocking: root.previewUnlocking
+      settings: root.settings
+      keyboardLayout: root.keyboardLayout
+      capsLock: root.capsLock
+      fingerprintScanning: root.fingerprintConfigured
+      ambient: root.previewAmbient
       fingerprintConfigured: root.fingerprintConfigured
       authenticatingPassword: false
       failureMessage: ""
@@ -436,6 +598,16 @@ Item {
     id: fingerprintPam
     config: "omarchy-lock-fingerprint"
     user: root.userName
+
+    // pam_fprintd reports each unmatched read as a message and only fails the
+    // conversation after several, so flash on the message itself.
+    onPamMessage: {
+      var text = String(message || "")
+      if (!root.lockRequested || !/match|fail/i.test(text)) return
+      root.fingerprintFeedback = "failed"
+      root.runWake()
+      fingerprintFeedbackTimer.restart()
+    }
 
     onCompleted: function(result) {
       root.handleFingerprintFinished(result)
@@ -518,6 +690,55 @@ Item {
     command: ["rm", "-rf", root.snapshotDir]
   }
 
+  FileView {
+    path: root.shellConfigPath
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: root.applySettings(text())
+  }
+
+  Process {
+    id: keyboardProc
+    command: ["hyprctl", "-j", "devices"]
+    stdout: StdioCollector { id: keyboardStdout; waitForEnd: true }
+    onExited: {
+      root.readKeyboard(keyboardStdout.text)
+      if (root.keyboardRefreshPending) root.refreshKeyboard()
+    }
+  }
+
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      if (!root.lockRequested || !event || String(event.name) !== "activelayout") return
+      root.refreshKeyboard()
+    }
+  }
+
+  Process { id: powerProc }
+  Process {
+    id: backlightProc
+    onExited: if (!root.backlightDimmed) backlightRestoreProc.running = true
+  }
+
+  Process {
+    id: backlightRestoreProc
+    command: ["bash", "-c", "d=$(omarchy-hw-display) && brightnessctl -q -d \"$d\" -r"]
+  }
+
+  Timer {
+    id: ambientTimer
+    repeat: false
+    onTriggered: root.enterAmbient()
+  }
+
+  Timer {
+    id: fingerprintFeedbackTimer
+    interval: 1400
+    repeat: false
+    onTriggered: root.fingerprintFeedback = ""
+  }
+
   Timer {
     id: previewOutroTimer
     interval: root.unlockOutroMs
@@ -544,7 +765,8 @@ Item {
 
   Timer {
     id: idleBlankTimer
-    interval: 120000 // keep the lock screen lit for 2 minutes of inactivity (stock: 5000)
+    // Set from settings.screenOffAfter by armBlankTimer().
+    interval: 120000
     repeat: false
     property double armedAt: 0
     onTriggered: {
@@ -663,12 +885,16 @@ Item {
         fingerprint: root.fingerprintConfigured,
         authenticating: root.authenticating,
         lastEvent: root.lastEvent,
-        lastEventAt: root.lastEventAt
+        lastEventAt: root.lastEventAt,
+        ambient: root.ambient,
+        keyboardLayout: root.keyboardLayout,
+        settings: root.settings
       })
     }
 
     function preview(): string {
       root.previewUnlocking = false
+      root.refreshKeyboard()
       root.refreshBackground()
       root.refreshFingerprintStatus()
       root.previewVisible = false
@@ -680,6 +906,13 @@ Item {
     function hidePreview(): string {
       root.closePreview()
       return "ok"
+    }
+
+    // Toggles the always-on look on an open preview.
+    function previewAmbient(): string {
+      if (!root.previewVisible) return "no-preview"
+      root.previewAmbient = !root.previewAmbient
+      return root.previewAmbient ? "on" : "off"
     }
 
     // Plays the unlock fade on an open preview, for trying the animation out.
